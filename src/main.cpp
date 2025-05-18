@@ -35,7 +35,7 @@ void setup() {
   SensESPAppBuilder builder;
   sensesp_app = (&builder)
                     // Set a custom hostname for the app.
-                    ->set_hostname("diesel-tank-monitor")
+                    ->set_hostname("refrigerator-monitor")
                     ->enable_ota("LilleMyOTA")
                     // Optionally, hard-code the WiFi and Signal K server
                     // settings. This is normally not needed.
@@ -69,74 +69,59 @@ void setup() {
   // To find valid Signal K Paths that fits your need you look at this link:
   // https://signalk.org/specification/1.7.0/doc/vesselsBranch.html
 
-  // Measure battery house temperature (replaces coolant temp)
-  auto battery_temp = new OneWireTemperature(
-      dts, read_delay, "/batteryHouseTemperature/oneWire");
+  // Create OneWire temperature sensors for refrigerator monitoring
+  auto* fridge_inside_temp =
+      new OneWireTemperature(dts, read_delay, "/fridge/inside/oneWire");
+  auto* fridge_compressor_temp =
+      new OneWireTemperature(dts, read_delay, "/fridge/compressor/oneWire");
+  auto* fridge_locker_temp =
+      new OneWireTemperature(dts, read_delay, "/fridge/locker/oneWire");
 
-  ConfigItem(battery_temp)
-      ->set_title("Battery House Temperature")
-      ->set_description("Temperature in the battery compartment")
-      ->set_sort_order(100);
+  // Calibration transforms
+  auto* fridge_inside_cal = new Linear(1.0, 0.0, "/fridge/inside/calibration");
+  auto* fridge_compressor_cal =
+      new Linear(1.0, 0.0, "/fridge/compressor/calibration");
+  auto* fridge_locker_cal = new Linear(1.0, 0.0, "/fridge/locker/calibration");
 
-  auto battery_temp_calibration =
-      new Linear(1.0, 0.0, "/batteryHouseTemperature/linear");
+  // Signal K outputs with configurable SK paths
+  auto* fridge_inside_sk = new SKOutputFloat(
+      "environment.refrigerator.inside.temperature", "/fridge/inside/skPath");
+  auto* fridge_compressor_sk =
+      new SKOutputFloat("environment.refrigerator.compressor.temperature",
+                        "/fridge/compressor/skPath");
+  auto* fridge_locker_sk = new SKOutputFloat(
+      "environment.refrigerator.locker.temperature", "/fridge/locker/skPath");
 
-  ConfigItem(battery_temp_calibration)
-      ->set_title("Battery Temperature Calibration")
-      ->set_description("Calibration for the battery house temperature")
-      ->set_sort_order(200);
+  // Optionally label in Config UI
+  ConfigItem(fridge_inside_temp)
+      ->set_title("Fridge Interior Temp")
+      ->set_description("Temperature inside the refrigerator");
 
-  auto battery_temp_sk_output =
-      new SKOutputFloat("electrical.batteries.house.temperature",
-                        "/batteryHouseTemperature/skPath");
+  ConfigItem(fridge_compressor_temp)
+      ->set_title("Fridge Compressor Temp")
+      ->set_description("Temperature on the compressor");
 
-  ConfigItem(battery_temp_sk_output)
-      ->set_title("Battery House Temperature Signal K Path")
-      ->set_description("Signal K path for the battery house temperature")
-      ->set_sort_order(300);
+  ConfigItem(fridge_locker_temp)
+      ->set_title("Fridge Locker Temp")
+      ->set_description(
+          "Ambient temperature where the fridge compressor is installed");
 
-  battery_temp->connect_to(battery_temp_calibration)
-      ->connect_to(battery_temp_sk_output);
+  ConfigItem(fridge_inside_cal)->set_title("Fridge Interior Calibration");
+  ConfigItem(fridge_compressor_cal)->set_title("Compressor Calibration");
+  ConfigItem(fridge_locker_cal)->set_title("Locker Calibration");
 
-  // Measure exhaust temperature
-  auto* exhaust_temp =
-      new OneWireTemperature(dts, read_delay, "/exhaustTemperature/oneWire");
-  auto* exhaust_temp_calibration =
-      new Linear(1.0, 0.0, "/exhaustTemperature/linear");
-  ConfigItem(exhaust_temp_calibration)
-      ->set_title("exhaust Temperature Calibration")
-      ->set_description("Calibration for the exhaust temperature sensor")
-      ->set_sort_order(200);
+  ConfigItem(fridge_inside_sk)->set_title("Signal K Path - Fridge Inside");
+  ConfigItem(fridge_compressor_sk)
+      ->set_title("Signal K Path - Fridge Compressor");
+  ConfigItem(fridge_locker_sk)->set_title("Signal K Path - Fridge Locker");
 
-  auto* exhaust_temp_sk_output = new SKOutputFloat(
-      "propulsion.mainEngine.exhaustTemperature", "/exhaustTemperature/skPath");
-
-  ConfigItem(exhaust_temp_sk_output)
-      ->set_title("exhaust Temperature Signal K Path")
-      ->set_description("Signal K path for the exhaust temperature")
-      ->set_sort_order(300);
-  exhaust_temp->connect_to(exhaust_temp_calibration)
-      ->connect_to(exhaust_temp_sk_output);
-
-  // Measure temperature of 12v alternator
-  auto* alt_12v_temp =
-      new OneWireTemperature(dts, read_delay, "/12vAltTemperature/oneWire");
-  auto* alt_12v_temp_calibration =
-      new Linear(1.0, 0.0, "/12vAltTemperature/linear");
-  ConfigItem(alt_12v_temp_calibration)
-      ->set_title("alternator Temperature Calibration")
-      ->set_description("Calibration for the alternator temperature sensor")
-      ->set_sort_order(200);
-
-  auto* alt_12v_temp_sk_output = new SKOutputFloat(
-      "electrical.alternators.12V.temperature", "/12vAltTemperature/skPath");
-
-  ConfigItem(alt_12v_temp_sk_output)
-      ->set_title("alternator Temperature Signal K Path")
-      ->set_description("Signal K path for the alternator temperature")
-      ->set_sort_order(300);
-  alt_12v_temp->connect_to(alt_12v_temp_calibration)
-      ->connect_to(alt_12v_temp_sk_output);
+  // Connect pipelines
+  fridge_inside_temp->connect_to(fridge_inside_cal)
+      ->connect_to(fridge_inside_sk);
+  fridge_compressor_temp->connect_to(fridge_compressor_cal)
+      ->connect_to(fridge_compressor_sk);
+  fridge_locker_temp->connect_to(fridge_locker_cal)
+      ->connect_to(fridge_locker_sk);
 
   // Constants
   const float adc_voltage_reference = 3.3;  // ESP32 ADC ref voltage
@@ -147,28 +132,28 @@ void setup() {
   // Reverse to get sensor resistance from voltage:
   // R_sensor = R_fixed * (V / (Vin - V))
 
-  // Analog input pin
-  const int analog_pin = 34;
+//   // Analog input pin
+//   const int analog_pin = 34;
 
-  // Create analog sensor
-  auto* analog_input =
-      new AnalogInput(analog_pin, 1000);  // sample every 1000 ms
+//   // Create analog sensor
+//   auto* analog_input =
+//       new AnalogInput(analog_pin, 1000);  // sample every 1000 ms
 
-  // Convert raw voltage to resistance using a lambda
-  auto* resistance_transform = new LambdaTransform<float, float>(
-      [fixed_resistor, adc_voltage_reference, adc_max](float voltage) -> float {
-        if (voltage <= 0.0 || voltage >= adc_voltage_reference) return 9999.0;
-        return fixed_resistor * voltage / (adc_voltage_reference - voltage);
-      });
+//   // Convert raw voltage to resistance using a lambda
+//   auto* resistance_transform = new LambdaTransform<float, float>(
+//       [fixed_resistor, adc_voltage_reference, adc_max](float voltage) -> float {
+//         if (voltage <= 0.0 || voltage >= adc_voltage_reference) return 9999.0;
+//         return fixed_resistor * voltage / (adc_voltage_reference - voltage);
+//       });
 
-  // Convert resistance (0–190Ω) to percentage
-  auto* percent_transform =
-      new Linear(1.0 / 190.0, 0.0);  // 0Ω -> 0%, 190Ω -> 100%
+//   // Convert resistance (0–190Ω) to percentage
+//   auto* percent_transform =
+//       new Linear(1.0 / 190.0, 0.0);  // 0Ω -> 0%, 190Ω -> 100%
 
-  // Connect the pipeline
-  analog_input->connect_to(resistance_transform)
-      ->connect_to(percent_transform)
-      ->connect_to(new SKOutputFloat("tanks.diesel.level"));
+//   // Connect the pipeline
+//   analog_input->connect_to(resistance_transform)
+//       ->connect_to(percent_transform)
+//       ->connect_to(new SKOutputFloat("tanks.diesel.level"));
 }
 
 void loop() { event_loop()->tick(); }
